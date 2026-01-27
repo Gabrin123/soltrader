@@ -42,6 +42,7 @@ SCAN_INTERVAL_MINUTES = 15
 
 # State management
 last_notification_time = None
+recently_notified_coins = []  # Track coins we've already sent
 active_positions = {}  # {coin_address: {entry_price, entry_time, amount, ...}}
 pending_approvals = {}  # {message_id: coin_data}
 
@@ -66,17 +67,28 @@ class SolanaScanner:
                 trending = []
                 for pair in pairs[:50]:  # Top 50 pairs
                     if pair.get('chainId') == 'solana':
+                        symbol = pair.get('baseToken', {}).get('symbol', '')
+                        
+                        # Exclude major tokens
+                        excluded = ['SOL', 'USDC', 'USDT', 'BONK', 'WIF', 'JUP', 'PYTH', 'JTO', 'RNDR', 'HNT']
+                        if symbol in excluded:
+                            continue
+                        
                         # Basic filters for meme coins
                         liquidity = float(pair.get('liquidity', {}).get('usd', 0))
                         volume_24h = float(pair.get('volume', {}).get('h24', 0))
+                        price = float(pair.get('priceUsd', 0))
                         
-                        # Look for coins with decent liquidity but not too established
-                        if 1000 < liquidity < 500000 and volume_24h > 5000:
+                        # Look for coins with:
+                        # - Decent liquidity but not too established
+                        # - Good volume
+                        # - Low price (meme coins are usually cheap)
+                        if 5000 < liquidity < 1000000 and volume_24h > 10000 and price < 1:
                             trending.append({
                                 'address': pair.get('baseToken', {}).get('address'),
-                                'symbol': pair.get('baseToken', {}).get('symbol'),
+                                'symbol': symbol,
                                 'name': pair.get('baseToken', {}).get('name'),
-                                'price': float(pair.get('priceUsd', 0)),
+                                'price': price,
                                 'volume_24h': volume_24h,
                                 'liquidity': liquidity,
                                 'price_change_1h': float(pair.get('priceChange', {}).get('h1', 0)),
@@ -344,6 +356,11 @@ def analyze_and_notify():
     for coin in coins[:10]:  # Check top 10
         logger.info(f"\nAnalyzing {coin['symbol']}...")
         
+        # Skip if we already notified about this coin recently
+        if coin['address'] in recently_notified_coins:
+            logger.info(f"  ⏭ Already notified about this coin recently")
+            continue
+        
         # Technical analysis (Money Line)
         ta_result = ta_analyzer.analyze_money_line(coin)
         
@@ -424,6 +441,12 @@ def analyze_and_notify():
     if msg_id:
         last_notification_time = now
         pending_approvals[msg_id] = best
+        recently_notified_coins.append(coin['address'])
+        
+        # Keep only last 20 coins in memory to avoid repeats
+        if len(recently_notified_coins) > 20:
+            recently_notified_coins.pop(0)
+        
         logger.info("✓ Notification sent!")
 
 def monitor_positions():
