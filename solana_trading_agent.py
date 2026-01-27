@@ -183,18 +183,19 @@ class ComprehensiveAnalyzer:
         price_6h = coin_data.get('price_change_6h', 0)
         price_24h = coin_data.get('price_change_24h', 0)
         
-        if price_24h > 10:
+        # Focus on 4-6h timeframe (sweet spot for meme coins)
+        if price_6h > 3:  # Lowered from 5%
             score += 2
-            signals.append(f"📈 Strong 24h uptrend: +{price_24h:.1f}%")
-        elif price_24h > 0:
+            signals.append(f"📈 4-6h uptrend: +{price_6h:.1f}%")
+        elif price_6h > 0:
             score += 1
-            signals.append(f"📈 Positive 24h trend: +{price_24h:.1f}%")
-        else:
-            warnings.append(f"⚠️ Negative 24h trend: {price_24h:.1f}%")
+            signals.append(f"📊 Positive 4-6h: +{price_6h:.1f}%")
         
-        if price_6h > 5:
+        if price_24h > 0:
             score += 1
-            signals.append(f"📊 Strong 6h momentum: +{price_6h:.1f}%")
+            signals.append(f"📈 24h positive: +{price_24h:.1f}%")
+        else:
+            warnings.append(f"⚠️ 24h negative: {price_24h:.1f}%")
         
         # ===== 2. VOLUME CONFIRMATION (2 points max) =====
         volume_1h = coin_data.get('volume_1h', 0)
@@ -202,12 +203,12 @@ class ComprehensiveAnalyzer:
         volume_24h = coin_data.get('volume_24h', 0)
         
         # Check if volume is increasing
-        avg_hourly = volume_24h / 24
-        if volume_1h > avg_hourly * 2:
+        avg_hourly = volume_24h / 24 if volume_24h > 0 else 1
+        if volume_1h > avg_hourly * 1.5:  # Lowered from 2x
             score += 1
-            signals.append(f"🔊 Volume surging (1h: ${volume_1h:.0f})")
+            signals.append(f"🔊 Volume increasing (1h: ${volume_1h:.0f})")
         
-        if volume_6h > (volume_24h / 4) * 1.3:
+        if volume_6h > (volume_24h / 4) * 1.1:  # Lowered from 1.3x
             score += 1
             signals.append("📊 Volume trending up")
         
@@ -215,10 +216,10 @@ class ComprehensiveAnalyzer:
         price_1h = coin_data.get('price_change_1h', 0)
         
         # Correlation: both volume AND price increasing
-        if price_1h > 0 and volume_1h > avg_hourly * 1.5:
+        if price_1h > 0 and volume_1h > avg_hourly * 1.2:  # Lowered from 1.5x
             score += 2
             signals.append(f"⚡ Price+Volume spike: +{price_1h:.1f}% with volume")
-        elif price_1h > 5:
+        elif price_1h > 3:  # Lowered from 5%
             score += 1
             signals.append(f"🚀 Price spike: +{price_1h:.1f}%")
         
@@ -272,7 +273,7 @@ class ComprehensiveAnalyzer:
             warnings.append(f"⚠️ Low liquidity: ${liquidity:.0f}")
         
         # Final verdict
-        is_bullish = score >= 6  # 60% threshold
+        is_bullish = score >= 4  # Lowered from 6 to catch more signals
         
         return {
             'is_bullish': is_bullish,
