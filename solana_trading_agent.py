@@ -353,12 +353,16 @@ def analyze_and_notify():
         
         social_score = twitter_result['score'] + tiktok_result['score']
         
-        # Need at least 1 social signal
-        if social_score < 1:
-            logger.info(f"  ❌ Insufficient social signals")
-            continue
+        # For testing: accept coins even without social signals
+        # TODO: Re-enable social requirement after testing
+        # if social_score < 1:
+        #     logger.info(f"  ❌ Insufficient social signals")
+        #     continue
         
-        logger.info(f"  ✓ Social signals present (score: {social_score})")
+        if social_score > 0:
+            logger.info(f"  ✓ Social signals present (score: {social_score})")
+        else:
+            logger.info(f"  ⚠ No social signals (proceeding anyway for testing)")
         
         # This is a candidate!
         candidates.append({
