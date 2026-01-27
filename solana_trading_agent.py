@@ -63,45 +63,38 @@ class SolanaScanner:
                 data = response.json()
                 pairs = data.get('pairs', [])
                 
+                logger.info(f"Dexscreener returned {len(pairs)} total pairs")
+                
                 # Filter for new/trending meme coins
                 trending = []
-                for pair in pairs:
+                checked = 0
+                
+                for pair in pairs[:100]:  # Check more pairs
+                    checked += 1
+                    
                     if pair.get('chainId') != 'solana':
                         continue
                     
                     base_symbol = pair.get('baseToken', {}).get('symbol', '')
                     quote_symbol = pair.get('quoteToken', {}).get('symbol', '')
                     
-                    # Must be paired with SOL or USDC (not BE the SOL/USDC)
+                    # Must be paired with SOL or USDC
                     if quote_symbol not in ['SOL', 'USDC', 'WSOL']:
                         continue
                     
-                    # Exclude major tokens and stablecoins
-                    excluded = ['SOL', 'USDC', 'USDT', 'BONK', 'WIF', 'JUP', 'PYTH', 
-                               'JTO', 'RNDR', 'HNT', 'WSOL', 'BSOL', 'MSOL', 'RAY',
-                               'ORCA', 'SRM', 'FIDA', 'MNGO', 'SAMO']
+                    # Exclude major tokens only (shorter list)
+                    excluded = ['SOL', 'USDC', 'USDT', 'WSOL']
                     
                     if base_symbol in excluded:
                         continue
-                    
-                    # Skip if symbol looks like a version token or wrapped token
-                    if any(x in base_symbol for x in ['W', 'V2', 'V3', '_', 'OLD']):
-                        if len(base_symbol) < 6:  # Unless it's a short meme name
-                            continue
                     
                     # Basic filters for meme coins
                     liquidity = float(pair.get('liquidity', {}).get('usd', 0))
                     volume_24h = float(pair.get('volume', {}).get('h24', 0))
                     price = float(pair.get('priceUsd', 0))
                     
-                    # Look for actual meme coins:
-                    # - Lower liquidity range (newer coins)
-                    # - Decent volume
-                    # - Very low price OR reasonable price with good volume
-                    if (10000 < liquidity < 500000 and 
-                        volume_24h > 5000 and 
-                        (price < 0.01 or (price < 10 and volume_24h > 20000))):
-                        
+                    # More relaxed filters
+                    if liquidity > 3000 and volume_24h > 1000:
                         trending.append({
                             'address': pair.get('baseToken', {}).get('address'),
                             'symbol': base_symbol,
@@ -110,11 +103,17 @@ class SolanaScanner:
                             'volume_24h': volume_24h,
                             'liquidity': liquidity,
                             'price_change_1h': float(pair.get('priceChange', {}).get('h1', 0)),
+                            'price_change_6h': float(pair.get('priceChange', {}).get('h6', 0)),
+                            'price_change_24h': float(pair.get('priceChange', {}).get('h24', 0)),
                             'dex_url': pair.get('url'),
                             'quote_token': quote_symbol
                         })
                 
-                logger.info(f"Found {len(trending)} trending meme coins")
+                logger.info(f"Checked {checked} pairs, found {len(trending)} potential meme coins")
+                
+                # Sort by volume (most active first)
+                trending.sort(key=lambda x: x['volume_24h'], reverse=True)
+                
                 return trending
                 
         except Exception as e:
@@ -372,8 +371,11 @@ def analyze_and_notify():
     
     candidates = []
     
-    for coin in coins[:10]:  # Check top 10
-        logger.info(f"\nAnalyzing {coin['symbol']}...")
+    for coin in coins[:20]:  # Check top 20 by volume
+        logger.info(f"\n--- Analyzing {coin['symbol']} ---")
+        logger.info(f"    Price: ${coin['price']:.8f}")
+        logger.info(f"    Volume 24h: ${coin['volume_24h']:.0f}")
+        logger.info(f"    Liquidity: ${coin['liquidity']:.0f}")
         
         # Skip if we already notified about this coin recently
         if coin['address'] in recently_notified_coins:
