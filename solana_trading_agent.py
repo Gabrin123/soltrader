@@ -55,8 +55,8 @@ class SolanaScanner:
     def get_trending_coins(self) -> List[Dict]:
         """Fetch trending coins from Dexscreener"""
         try:
-            # Dexscreener API for Solana tokens
-            url = "https://api.dexscreener.com/latest/dex/search?q=solana"
+            # Dexscreener API for Solana new pairs (more likely to be meme coins)
+            url = "https://api.dexscreener.com/latest/dex/pairs/solana"
             response = requests.get(url, timeout=10)
             
             if response.status_code == 200:
@@ -65,37 +65,56 @@ class SolanaScanner:
                 
                 # Filter for new/trending meme coins
                 trending = []
-                for pair in pairs[:50]:  # Top 50 pairs
-                    if pair.get('chainId') == 'solana':
-                        symbol = pair.get('baseToken', {}).get('symbol', '')
-                        
-                        # Exclude major tokens
-                        excluded = ['SOL', 'USDC', 'USDT', 'BONK', 'WIF', 'JUP', 'PYTH', 'JTO', 'RNDR', 'HNT']
-                        if symbol in excluded:
+                for pair in pairs:
+                    if pair.get('chainId') != 'solana':
+                        continue
+                    
+                    base_symbol = pair.get('baseToken', {}).get('symbol', '')
+                    quote_symbol = pair.get('quoteToken', {}).get('symbol', '')
+                    
+                    # Must be paired with SOL or USDC (not BE the SOL/USDC)
+                    if quote_symbol not in ['SOL', 'USDC', 'WSOL']:
+                        continue
+                    
+                    # Exclude major tokens and stablecoins
+                    excluded = ['SOL', 'USDC', 'USDT', 'BONK', 'WIF', 'JUP', 'PYTH', 
+                               'JTO', 'RNDR', 'HNT', 'WSOL', 'BSOL', 'MSOL', 'RAY',
+                               'ORCA', 'SRM', 'FIDA', 'MNGO', 'SAMO']
+                    
+                    if base_symbol in excluded:
+                        continue
+                    
+                    # Skip if symbol looks like a version token or wrapped token
+                    if any(x in base_symbol for x in ['W', 'V2', 'V3', '_', 'OLD']):
+                        if len(base_symbol) < 6:  # Unless it's a short meme name
                             continue
+                    
+                    # Basic filters for meme coins
+                    liquidity = float(pair.get('liquidity', {}).get('usd', 0))
+                    volume_24h = float(pair.get('volume', {}).get('h24', 0))
+                    price = float(pair.get('priceUsd', 0))
+                    
+                    # Look for actual meme coins:
+                    # - Lower liquidity range (newer coins)
+                    # - Decent volume
+                    # - Very low price OR reasonable price with good volume
+                    if (10000 < liquidity < 500000 and 
+                        volume_24h > 5000 and 
+                        (price < 0.01 or (price < 10 and volume_24h > 20000))):
                         
-                        # Basic filters for meme coins
-                        liquidity = float(pair.get('liquidity', {}).get('usd', 0))
-                        volume_24h = float(pair.get('volume', {}).get('h24', 0))
-                        price = float(pair.get('priceUsd', 0))
-                        
-                        # Look for coins with:
-                        # - Decent liquidity but not too established
-                        # - Good volume
-                        # - Low price (meme coins are usually cheap)
-                        if 5000 < liquidity < 1000000 and volume_24h > 10000 and price < 1:
-                            trending.append({
-                                'address': pair.get('baseToken', {}).get('address'),
-                                'symbol': symbol,
-                                'name': pair.get('baseToken', {}).get('name'),
-                                'price': price,
-                                'volume_24h': volume_24h,
-                                'liquidity': liquidity,
-                                'price_change_1h': float(pair.get('priceChange', {}).get('h1', 0)),
-                                'dex_url': pair.get('url')
-                            })
+                        trending.append({
+                            'address': pair.get('baseToken', {}).get('address'),
+                            'symbol': base_symbol,
+                            'name': pair.get('baseToken', {}).get('name'),
+                            'price': price,
+                            'volume_24h': volume_24h,
+                            'liquidity': liquidity,
+                            'price_change_1h': float(pair.get('priceChange', {}).get('h1', 0)),
+                            'dex_url': pair.get('url'),
+                            'quote_token': quote_symbol
+                        })
                 
-                logger.info(f"Found {len(trending)} trending coins")
+                logger.info(f"Found {len(trending)} trending meme coins")
                 return trending
                 
         except Exception as e:
