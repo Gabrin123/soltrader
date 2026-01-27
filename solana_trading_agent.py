@@ -121,28 +121,34 @@ class TechnicalAnalyzer:
             score = 0
             reasons = []
             
-            # 1. Price momentum (1h change)
-            price_change_1h = float(pair.get('priceChange', {}).get('h1', 0))
-            if price_change_1h > 0:
+            # 1. Price momentum (6h change - longer term)
+            price_change_6h = float(pair.get('priceChange', {}).get('h6', 0))
+            if price_change_6h > 0:
                 score += 2
-                reasons.append(f"Positive 1h momentum: +{price_change_1h:.2f}%")
+                reasons.append(f"Positive 6h momentum: +{price_change_6h:.2f}%")
             
-            # 2. Volume increasing
-            volume_1h = float(pair.get('volume', {}).get('h1', 0))
+            # 2. Strong 24h trend
+            price_change_24h = float(pair.get('priceChange', {}).get('h24', 0))
+            if price_change_24h > 5:  # At least 5% gain in 24h
+                score += 1
+                reasons.append(f"Strong 24h trend: +{price_change_24h:.2f}%")
+            
+            # 3. Volume increasing (compare 6h vs 24h average)
+            volume_6h = float(pair.get('volume', {}).get('h6', 0))
             volume_24h = float(pair.get('volume', {}).get('h24', 0))
-            if volume_1h > (volume_24h / 24) * 1.5:  # 1h volume > avg
-                score += 2
-                reasons.append("Strong 1h volume")
+            if volume_6h > (volume_24h / 4) * 1.2:  # 6h volume > 1.2x avg
+                score += 1
+                reasons.append("Volume trending up")
             
-            # 3. Not at recent high (avoid buying tops)
-            price_change_5m = float(pair.get('priceChange', {}).get('m5', 0))
-            if price_change_5m < 10:  # Not pumping in last 5 min
+            # 4. Not at recent high (avoid buying tops)
+            price_change_1h = float(pair.get('priceChange', {}).get('h1', 0))
+            if price_change_1h < 15:  # Not pumping heavily in last hour
                 score += 1
                 reasons.append("Not at immediate top")
             else:
-                reasons.append(f"WARNING: Recent pump +{price_change_5m:.1f}% in 5m")
+                reasons.append(f"WARNING: Recent pump +{price_change_1h:.1f}% in 1h")
             
-            # 4. Liquidity check
+            # 5. Liquidity check
             liquidity = float(pair.get('liquidity', {}).get('usd', 0))
             if liquidity > 10000:
                 score += 1
