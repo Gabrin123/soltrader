@@ -179,57 +179,89 @@ class ComprehensiveAnalyzer:
         
         address = coin_data['address']
         
+        logger.info(f"  Starting analysis for {coin_data.get('symbol', 'UNKNOWN')}...")
+        
         # ===== 1. TREND DIRECTION (3 points max) =====
+        logger.info(f"  [1/5] Checking trend direction...")
         price_6h = coin_data.get('price_change_6h', 0)
         price_24h = coin_data.get('price_change_24h', 0)
+        
+        logger.info(f"      6h change: {price_6h:.2f}%")
+        logger.info(f"      24h change: {price_24h:.2f}%")
         
         # Focus on 4-6h timeframe (sweet spot for meme coins)
         if price_6h > 3:  # Lowered from 5%
             score += 2
             signals.append(f"📈 4-6h uptrend: +{price_6h:.1f}%")
+            logger.info(f"      ✓ Strong 6h trend (+2 points, total: {score})")
         elif price_6h > 0:
             score += 1
             signals.append(f"📊 Positive 4-6h: +{price_6h:.1f}%")
+            logger.info(f"      ✓ Positive 6h trend (+1 point, total: {score})")
+        else:
+            logger.info(f"      ✗ Negative 6h trend (0 points)")
         
         if price_24h > 0:
             score += 1
             signals.append(f"📈 24h positive: +{price_24h:.1f}%")
+            logger.info(f"      ✓ Positive 24h (+1 point, total: {score})")
         else:
             warnings.append(f"⚠️ 24h negative: {price_24h:.1f}%")
+            logger.info(f"      ✗ Negative 24h (0 points)")
         
         # ===== 2. VOLUME CONFIRMATION (2 points max) =====
+        logger.info(f"  [2/5] Checking volume...")
         volume_1h = coin_data.get('volume_1h', 0)
         volume_6h = coin_data.get('volume_6h', 0)
         volume_24h = coin_data.get('volume_24h', 0)
         
+        logger.info(f"      1h volume: ${volume_1h:.2f}")
+        logger.info(f"      6h volume: ${volume_6h:.2f}")
+        logger.info(f"      24h volume: ${volume_24h:.2f}")
+        
         # Check if volume is increasing
         avg_hourly = volume_24h / 24 if volume_24h > 0 else 1
+        logger.info(f"      Avg hourly volume: ${avg_hourly:.2f}")
+        
         if volume_1h > avg_hourly * 1.5:  # Lowered from 2x
             score += 1
             signals.append(f"🔊 Volume increasing (1h: ${volume_1h:.0f})")
+            logger.info(f"      ✓ 1h volume spike (+1 point, total: {score})")
+        else:
+            logger.info(f"      ✗ 1h volume not spiking (0 points)")
         
         if volume_6h > (volume_24h / 4) * 1.1:  # Lowered from 1.3x
             score += 1
             signals.append("📊 Volume trending up")
+            logger.info(f"      ✓ 6h volume trending (+1 point, total: {score})")
+        else:
+            logger.info(f"      ✗ 6h volume not trending (0 points)")
         
         # ===== 3. VOLUME SPIKE + PRICE INCREASE (2 points max) =====
+        logger.info(f"  [3/5] Checking price/volume correlation...")
         price_1h = coin_data.get('price_change_1h', 0)
+        logger.info(f"      1h price change: {price_1h:.2f}%")
         
         # Correlation: both volume AND price increasing
         if price_1h > 0 and volume_1h > avg_hourly * 1.2:  # Lowered from 1.5x
             score += 2
             signals.append(f"⚡ Price+Volume spike: +{price_1h:.1f}% with volume")
+            logger.info(f"      ✓ Price+Volume correlation (+2 points, total: {score})")
         elif price_1h > 3:  # Lowered from 5%
             score += 1
             signals.append(f"🚀 Price spike: +{price_1h:.1f}%")
+            logger.info(f"      ✓ Price spike only (+1 point, total: {score})")
+        else:
+            logger.info(f"      ✗ No significant movement (0 points)")
         
         # Avoid buying tops
         if price_1h > 20:
             score -= 1
             warnings.append(f"⚠️ Possible top - recent pump: +{price_1h:.1f}%")
+            logger.info(f"      ⚠ Buying top warning (-1 point, total: {score})")
         
         # ===== 4. ON-CHAIN ANALYSIS (3 points max) =====
-        logger.info(f"  Fetching on-chain data for {coin_data['symbol']}...")
+        logger.info(f"  [4/5] Fetching on-chain data...")
         
         try:
             # Get Birdeye data
@@ -274,6 +306,9 @@ class ComprehensiveAnalyzer:
         
         # Final verdict
         is_bullish = score >= 4  # Lowered from 6 to catch more signals
+        
+        logger.info(f"\n  FINAL SCORE: {score}/{max_score} ({int((score/max_score)*100)}%)")
+        logger.info(f"  VERDICT: {'✅ BULLISH' if is_bullish else '❌ NOT BULLISH'} (threshold: 4)")
         
         return {
             'is_bullish': is_bullish,
@@ -335,15 +370,24 @@ def analyze_and_notify():
     candidates = []
     
     for coin in coins[:15]:
-        logger.info(f"\n--- {coin['symbol']} ({coin['name']}) ---")
-        logger.info(f"    Address: {coin['address']}")
-        logger.info(f"    Price: ${coin['price']:.8f}")
-        logger.info(f"    Volume 24h: ${coin['volume_24h']:.0f}")
+        logger.info(f"\n{'='*60}")
+        logger.info(f"ANALYZING: {coin['symbol']} ({coin['name']})")
+        logger.info(f"{'='*60}")
+        logger.info(f"Address: {coin['address']}")
+        logger.info(f"Price: ${coin['price']:.8f}")
+        logger.info(f"Volume 24h: ${coin['volume_24h']:.2f}")
+        logger.info(f"Volume 6h: ${coin.get('volume_6h', 0):.2f}")
+        logger.info(f"Volume 1h: ${coin.get('volume_1h', 0):.2f}")
+        logger.info(f"Liquidity: ${coin['liquidity']:.2f}")
+        logger.info(f"Price Change 24h: {coin.get('price_change_24h', 0):.2f}%")
+        logger.info(f"Price Change 6h: {coin.get('price_change_6h', 0):.2f}%")
+        logger.info(f"Price Change 1h: {coin.get('price_change_1h', 0):.2f}%")
         
         if coin['address'] in recently_notified_coins:
-            logger.info("  ⏭ Already notified")
+            logger.info("⏭ SKIPPED: Already notified about this coin")
             continue
         
+        logger.info("\nStarting comprehensive analysis...")
         result = analyzer.analyze(coin)
         
         logger.info(f"\n  📊 ANALYSIS SCORE: {result['score']}/{result['max_score']} ({result['percentage']}%)")
