@@ -18,7 +18,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Solana Meme Coin Trading Agent is running!"
+    return "Solana Meme Coin Trading Agent V2 is running!"
 
 @app.route('/health')
 def health():
@@ -32,22 +32,25 @@ def run_flask():
 BOT_TOKEN = os.environ.get('BOT_TOKEN', '8457965430:AAHERt3c9hX118RcVGLoxu1OZFyePK1c7dI')
 CHAT_ID = os.environ.get('CHAT_ID', '-5232036612')
 WALLET_ADDRESS = os.environ.get('WALLET_ADDRESS', '8hZfubBEVqJGF73a4x9f8XFKgNRmHxdz9p81pScRzGmo')
-SOLANA_PRIVATE_KEY = os.environ.get('SOLANA_PRIVATE_KEY', '')  # Will be added later
+SOLANA_PRIVATE_KEY = os.environ.get('SOLANA_PRIVATE_KEY', '')
+
+# Birdeye API (free tier)
+BIRDEYE_API_KEY = os.environ.get('BIRDEYE_API_KEY', 'demo')  # Get free key from birdeye.so
 
 # Trading parameters
 SOL_PER_TRADE = float(os.environ.get('SOL_PER_TRADE', '0.1'))
-PROFIT_TARGET = 0.05  # 5%
+PROFIT_TARGET = 0.05
 HOLD_PERIOD_HOURS = 48
 SCAN_INTERVAL_MINUTES = 15
 
 # State management
 last_notification_time = None
-recently_notified_coins = []  # Track coins we've already sent
-active_positions = {}  # {coin_address: {entry_price, entry_time, amount, ...}}
-pending_approvals = {}  # {message_id: coin_data}
+recently_notified_coins = []
+active_positions = {}
+pending_approvals = {}
 
 class SolanaScanner:
-    """Scans for new Solana meme coins on pump.fun and bags.fm"""
+    """Scans for new Solana meme coins with on-chain analysis"""
     
     def __init__(self):
         self.last_scan = None
@@ -55,7 +58,6 @@ class SolanaScanner:
     def get_trending_coins(self) -> List[Dict]:
         """Fetch trending coins from Dexscreener"""
         try:
-            # Dexscreener API for Solana new pairs (more likely to be meme coins)
             url = "https://api.dexscreener.com/latest/dex/pairs/solana"
             response = requests.get(url, timeout=10)
             
@@ -65,226 +67,234 @@ class SolanaScanner:
                 
                 logger.info(f"Dexscreener returned {len(pairs)} total pairs")
                 
-                # Filter for new/trending meme coins
                 trending = []
-                checked = 0
                 
-                for pair in pairs[:100]:  # Check more pairs
-                    checked += 1
-                    
+                for pair in pairs[:100]:
                     if pair.get('chainId') != 'solana':
                         continue
                     
                     base_symbol = pair.get('baseToken', {}).get('symbol', '')
                     quote_symbol = pair.get('quoteToken', {}).get('symbol', '')
                     
-                    # Must be paired with SOL or USDC
                     if quote_symbol not in ['SOL', 'USDC', 'WSOL']:
                         continue
                     
-                    # Exclude major tokens only (shorter list)
-                    excluded = ['SOL', 'USDC', 'USDT', 'WSOL']
-                    
-                    if base_symbol in excluded:
+                    # Exclude only major currencies
+                    if base_symbol in ['SOL', 'USDC', 'USDT', 'WSOL']:
                         continue
                     
-                    # Basic filters for meme coins
                     liquidity = float(pair.get('liquidity', {}).get('usd', 0))
                     volume_24h = float(pair.get('volume', {}).get('h24', 0))
-                    price = float(pair.get('priceUsd', 0))
                     
-                    # More relaxed filters
+                    # Relaxed filters
                     if liquidity > 3000 and volume_24h > 1000:
                         trending.append({
                             'address': pair.get('baseToken', {}).get('address'),
                             'symbol': base_symbol,
                             'name': pair.get('baseToken', {}).get('name'),
-                            'price': price,
+                            'price': float(pair.get('priceUsd', 0)),
                             'volume_24h': volume_24h,
+                            'volume_6h': float(pair.get('volume', {}).get('h6', 0)),
+                            'volume_1h': float(pair.get('volume', {}).get('h1', 0)),
                             'liquidity': liquidity,
                             'price_change_1h': float(pair.get('priceChange', {}).get('h1', 0)),
                             'price_change_6h': float(pair.get('priceChange', {}).get('h6', 0)),
                             'price_change_24h': float(pair.get('priceChange', {}).get('h24', 0)),
-                            'dex_url': pair.get('url'),
-                            'quote_token': quote_symbol
+                            'dex_url': pair.get('url')
                         })
                 
-                logger.info(f"Checked {checked} pairs, found {len(trending)} potential meme coins")
-                
-                # Sort by volume (most active first)
+                logger.info(f"Found {len(trending)} potential coins")
                 trending.sort(key=lambda x: x['volume_24h'], reverse=True)
-                
                 return trending
                 
         except Exception as e:
-            logger.error(f"Error fetching trending coins: {e}")
+            logger.error(f"Error fetching coins: {e}")
         
         return []
 
-class TechnicalAnalyzer:
-    """Analyzes charts using Money Line strategy"""
+class OnChainAnalyzer:
+    """Analyzes on-chain data using Birdeye API"""
     
-    def analyze_money_line(self, coin_data: Dict) -> Dict:
-        """
-        Simplified Money Line analysis based on Ivan on Tech strategy
-        Returns: {is_bullish: bool, score: int, reasons: []}
-        """
+    def __init__(self):
+        self.base_url = "https://public-api.birdeye.so"
+        self.headers = {
+            "X-API-KEY": BIRDEYE_API_KEY
+        }
+    
+    def get_token_overview(self, token_address: str) -> Dict:
+        """Get comprehensive token data from Birdeye"""
         try:
-            address = coin_data['address']
+            url = f"{self.base_url}/defi/token_overview"
+            params = {"address": token_address}
             
-            # Fetch detailed chart data from Dexscreener
-            url = f"https://api.dexscreener.com/latest/dex/tokens/{address}"
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, headers=self.headers, params=params, timeout=10)
             
-            if response.status_code != 200:
-                return {'is_bullish': False, 'score': 0, 'reasons': ['No chart data']}
-            
-            data = response.json()
-            pairs = data.get('pairs', [])
-            
-            if not pairs:
-                return {'is_bullish': False, 'score': 0, 'reasons': ['No trading pairs']}
-            
-            # Use the most liquid pair
-            pair = max(pairs, key=lambda x: float(x.get('liquidity', {}).get('usd', 0)))
-            
-            score = 0
-            reasons = []
-            
-            # 1. Price momentum (6h change - longer term)
-            price_change_6h = float(pair.get('priceChange', {}).get('h6', 0))
-            if price_change_6h > 0:
-                score += 2
-                reasons.append(f"Positive 6h momentum: +{price_change_6h:.2f}%")
-            
-            # 2. Strong 24h trend
-            price_change_24h = float(pair.get('priceChange', {}).get('h24', 0))
-            if price_change_24h > 5:  # At least 5% gain in 24h
-                score += 1
-                reasons.append(f"Strong 24h trend: +{price_change_24h:.2f}%")
-            
-            # 3. Volume increasing (compare 6h vs 24h average)
-            volume_6h = float(pair.get('volume', {}).get('h6', 0))
-            volume_24h = float(pair.get('volume', {}).get('h24', 0))
-            if volume_6h > (volume_24h / 4) * 1.2:  # 6h volume > 1.2x avg
-                score += 1
-                reasons.append("Volume trending up")
-            
-            # 4. Not at recent high (avoid buying tops)
-            price_change_1h = float(pair.get('priceChange', {}).get('h1', 0))
-            if price_change_1h < 15:  # Not pumping heavily in last hour
-                score += 1
-                reasons.append("Not at immediate top")
+            if response.status_code == 200:
+                data = response.json()
+                return data.get('data', {})
             else:
-                reasons.append(f"WARNING: Recent pump +{price_change_1h:.1f}% in 1h")
-            
-            # 5. Liquidity check
-            liquidity = float(pair.get('liquidity', {}).get('usd', 0))
-            if liquidity > 10000:
-                score += 1
-                reasons.append(f"Good liquidity: ${liquidity:.0f}")
-            
-            # Money Line is bullish if score >= 4
-            is_bullish = score >= 4
-            
-            return {
-                'is_bullish': is_bullish,
-                'score': score,
-                'reasons': reasons,
-                'price': float(pair.get('priceUsd', 0)),
-                'dex_url': pair.get('url')
-            }
-            
+                logger.warning(f"Birdeye API returned {response.status_code}")
+                
         except Exception as e:
-            logger.error(f"Error in TA analysis: {e}")
-            return {'is_bullish': False, 'score': 0, 'reasons': [f'Error: {str(e)}']}
-
-class SocialAnalyzer:
-    """Analyzes social sentiment on X and TikTok"""
+            logger.error(f"Error fetching Birdeye data: {e}")
+        
+        return {}
     
-    def check_twitter_sentiment(self, coin_symbol: str, coin_name: str) -> Dict:
-        """
-        Check Twitter/X sentiment via web scraping (no API needed)
-        Returns: {is_positive: bool, score: int, summary: str}
-        """
+    def get_holder_info(self, token_address: str) -> Dict:
+        """Get holder count and distribution"""
         try:
-            # Use Google to search recent tweets
-            query = f"{coin_symbol} OR {coin_name} solana site:twitter.com"
-            search_url = f"https://www.google.com/search?q={query}&tbs=qdr:h"  # Last hour
+            url = f"{self.base_url}/defi/token_holder"
+            params = {"address": token_address}
             
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            response = requests.get(search_url, headers=headers, timeout=10)
+            response = requests.get(url, headers=self.headers, params=params, timeout=10)
             
             if response.status_code == 200:
-                content = response.text.lower()
+                data = response.json()
+                return data.get('data', {})
                 
-                # Count bullish vs bearish keywords
-                bullish_keywords = ['pump', 'moon', 'bullish', 'buy', 'gem', 'launch']
-                bearish_keywords = ['scam', 'rug', 'dump', 'bearish', 'avoid']
-                
-                bullish_count = sum(content.count(word) for word in bullish_keywords)
-                bearish_count = sum(content.count(word) for word in bearish_keywords)
-                
-                # Check for mentions
-                mention_count = content.count('twitter.com')
-                
-                if mention_count > 5 and bullish_count > bearish_count * 2:
-                    return {
-                        'is_positive': True,
-                        'score': 2,
-                        'summary': f"{mention_count} mentions, bullish sentiment"
-                    }
-                elif mention_count > 10:
-                    return {
-                        'is_positive': True,
-                        'score': 1,
-                        'summary': f"{mention_count} mentions found"
-                    }
-            
-            return {'is_positive': False, 'score': 0, 'summary': 'Low X activity'}
-            
         except Exception as e:
-            logger.error(f"Error checking Twitter: {e}")
-            return {'is_positive': False, 'score': 0, 'summary': 'Error checking X'}
-    
-    def check_tiktok_sentiment(self, coin_symbol: str) -> Dict:
-        """Check TikTok via web search"""
-        try:
-            query = f"{coin_symbol} solana crypto site:tiktok.com"
-            search_url = f"https://www.google.com/search?q={query}&tbs=qdr:d"  # Last day
-            
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            response = requests.get(search_url, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                content = response.text
-                tiktok_count = content.count('tiktok.com')
-                
-                if tiktok_count >= 3:
-                    return {
-                        'is_positive': True,
-                        'score': 1,
-                        'summary': f"{tiktok_count} TikTok videos found"
-                    }
-            
-            return {'is_positive': False, 'score': 0, 'summary': 'No TikTok activity'}
-            
-        except Exception as e:
-            logger.error(f"Error checking TikTok: {e}")
-            return {'is_positive': False, 'score': 0, 'summary': 'Error checking TikTok'}
+            logger.error(f"Error fetching holder data: {e}")
+        
+        return {}
 
-def send_telegram(message: str, reply_markup: Optional[Dict] = None) -> Optional[int]:
-    """Send message to Telegram and return message_id"""
+class ComprehensiveAnalyzer:
+    """Multi-signal analysis combining price action, volume, and on-chain data"""
+    
+    def __init__(self):
+        self.onchain = OnChainAnalyzer()
+    
+    def analyze(self, coin_data: Dict) -> Dict:
+        """
+        Comprehensive analysis combining:
+        1. Trend direction
+        2. Volume confirmation
+        3. On-chain holder activity
+        4. Volume spike correlation
+        """
+        
+        score = 0
+        max_score = 10
+        signals = []
+        warnings = []
+        
+        address = coin_data['address']
+        
+        # ===== 1. TREND DIRECTION (3 points max) =====
+        price_6h = coin_data.get('price_change_6h', 0)
+        price_24h = coin_data.get('price_change_24h', 0)
+        
+        if price_24h > 10:
+            score += 2
+            signals.append(f"📈 Strong 24h uptrend: +{price_24h:.1f}%")
+        elif price_24h > 0:
+            score += 1
+            signals.append(f"📈 Positive 24h trend: +{price_24h:.1f}%")
+        else:
+            warnings.append(f"⚠️ Negative 24h trend: {price_24h:.1f}%")
+        
+        if price_6h > 5:
+            score += 1
+            signals.append(f"📊 Strong 6h momentum: +{price_6h:.1f}%")
+        
+        # ===== 2. VOLUME CONFIRMATION (2 points max) =====
+        volume_1h = coin_data.get('volume_1h', 0)
+        volume_6h = coin_data.get('volume_6h', 0)
+        volume_24h = coin_data.get('volume_24h', 0)
+        
+        # Check if volume is increasing
+        avg_hourly = volume_24h / 24
+        if volume_1h > avg_hourly * 2:
+            score += 1
+            signals.append(f"🔊 Volume surging (1h: ${volume_1h:.0f})")
+        
+        if volume_6h > (volume_24h / 4) * 1.3:
+            score += 1
+            signals.append("📊 Volume trending up")
+        
+        # ===== 3. VOLUME SPIKE + PRICE INCREASE (2 points max) =====
+        price_1h = coin_data.get('price_change_1h', 0)
+        
+        # Correlation: both volume AND price increasing
+        if price_1h > 0 and volume_1h > avg_hourly * 1.5:
+            score += 2
+            signals.append(f"⚡ Price+Volume spike: +{price_1h:.1f}% with volume")
+        elif price_1h > 5:
+            score += 1
+            signals.append(f"🚀 Price spike: +{price_1h:.1f}%")
+        
+        # Avoid buying tops
+        if price_1h > 20:
+            score -= 1
+            warnings.append(f"⚠️ Possible top - recent pump: +{price_1h:.1f}%")
+        
+        # ===== 4. ON-CHAIN ANALYSIS (3 points max) =====
+        logger.info(f"  Fetching on-chain data for {coin_data['symbol']}...")
+        
+        try:
+            # Get Birdeye data
+            token_data = self.onchain.get_token_overview(address)
+            
+            if token_data:
+                # Holder count
+                holder_count = token_data.get('holder', 0)
+                if holder_count > 1000:
+                    score += 1
+                    signals.append(f"👥 Strong holder base: {holder_count}")
+                elif holder_count > 100:
+                    signals.append(f"👥 Growing holders: {holder_count}")
+                else:
+                    warnings.append(f"⚠️ Low holder count: {holder_count}")
+                
+                # Unique traders (24h activity)
+                unique_traders_24h = token_data.get('uniqueWallet24h', 0)
+                if unique_traders_24h > 500:
+                    score += 1
+                    signals.append(f"🔥 High activity: {unique_traders_24h} traders/24h")
+                
+                # Top holders concentration (safety check)
+                top10_holder_percent = token_data.get('top10HolderPercent', 100)
+                if top10_holder_percent < 50:
+                    score += 1
+                    signals.append(f"✅ Decentralized: Top 10 hold {top10_holder_percent:.1f}%")
+                else:
+                    warnings.append(f"⚠️ Centralized: Top 10 hold {top10_holder_percent:.1f}%")
+                
+        except Exception as e:
+            logger.warning(f"  Could not fetch on-chain data: {e}")
+            warnings.append("⚠️ On-chain data unavailable")
+        
+        # ===== 5. LIQUIDITY SAFETY (bonus point) =====
+        liquidity = coin_data.get('liquidity', 0)
+        if liquidity > 50000:
+            score += 1
+            signals.append(f"💧 Strong liquidity: ${liquidity:.0f}")
+        elif liquidity < 5000:
+            warnings.append(f"⚠️ Low liquidity: ${liquidity:.0f}")
+        
+        # Final verdict
+        is_bullish = score >= 6  # 60% threshold
+        
+        return {
+            'is_bullish': is_bullish,
+            'score': score,
+            'max_score': max_score,
+            'percentage': int((score / max_score) * 100),
+            'signals': signals,
+            'warnings': warnings,
+            'price': coin_data['price'],
+            'dex_url': coin_data['dex_url']
+        }
+
+def send_telegram(message: str) -> Optional[int]:
+    """Send message to Telegram"""
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         data = {
             'chat_id': CHAT_ID,
             'text': message,
-            'parse_mode': 'HTML'
+            'parse_mode': 'HTML',
+            'disable_web_page_preview': False
         }
-        
-        if reply_markup:
-            data['reply_markup'] = json.dumps(reply_markup)
         
         response = requests.post(url, data=data, timeout=10)
         
@@ -298,31 +308,107 @@ def send_telegram(message: str, reply_markup: Optional[Dict] = None) -> Optional
     
     return None
 
-def send_telegram_photo(photo_url: str, caption: str) -> bool:
-    """Send photo to Telegram"""
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-        data = {
-            'chat_id': CHAT_ID,
-            'photo': photo_url,
-            'caption': caption,
-            'parse_mode': 'HTML'
-        }
+def analyze_and_notify():
+    """Main scanning and analysis"""
+    global last_notification_time
+    
+    now = datetime.now()
+    if last_notification_time and (now - last_notification_time).seconds < 180:
+        logger.info("Waiting for next notification window")
+        return
+    
+    logger.info("\n" + "="*70)
+    logger.info("STARTING COMPREHENSIVE SCAN")
+    logger.info("="*70)
+    
+    # Scan for coins
+    scanner = SolanaScanner()
+    coins = scanner.get_trending_coins()
+    
+    if not coins:
+        logger.info("No coins found")
+        return
+    
+    # Analyze each coin
+    analyzer = ComprehensiveAnalyzer()
+    candidates = []
+    
+    for coin in coins[:15]:
+        logger.info(f"\n--- {coin['symbol']} ({coin['name']}) ---")
+        logger.info(f"    Address: {coin['address']}")
+        logger.info(f"    Price: ${coin['price']:.8f}")
+        logger.info(f"    Volume 24h: ${coin['volume_24h']:.0f}")
         
-        response = requests.post(url, data=data, timeout=15)
+        if coin['address'] in recently_notified_coins:
+            logger.info("  ⏭ Already notified")
+            continue
         
-        if response.status_code == 200:
-            return True
+        result = analyzer.analyze(coin)
+        
+        logger.info(f"\n  📊 ANALYSIS SCORE: {result['score']}/{result['max_score']} ({result['percentage']}%)")
+        
+        for signal in result['signals']:
+            logger.info(f"  {signal}")
+        
+        for warning in result['warnings']:
+            logger.info(f"  {warning}")
+        
+        if result['is_bullish']:
+            logger.info(f"  ✅ BULLISH SIGNAL")
+            candidates.append({'coin': coin, 'analysis': result})
         else:
-            logger.error(f"Telegram photo error: {response.text}")
-            return False
-            
-    except Exception as e:
-        logger.error(f"Error sending photo: {e}")
-        return False
+            logger.info(f"  ❌ Not bullish (score too low)")
+    
+    if not candidates:
+        logger.info("\n❌ No bullish coins found this cycle")
+        return
+    
+    # Pick best candidate
+    best = max(candidates, key=lambda x: x['analysis']['score'])
+    coin = best['coin']
+    analysis = best['analysis']
+    
+    logger.info(f"\n🎯 BEST OPPORTUNITY: {coin['symbol']}")
+    logger.info(f"   Score: {analysis['score']}/{analysis['max_score']} ({analysis['percentage']}%)")
+    
+    # Send notification
+    message = f"""
+🚀 <b>BUY SIGNAL - {coin['symbol']}</b>
+
+<b>Token:</b> {coin['name']}
+<b>Address:</b> <code>{coin['address']}</code>
+<b>Price:</b> ${analysis['price']:.8f}
+
+<b>📊 ANALYSIS SCORE: {analysis['score']}/{analysis['max_score']} ({analysis['percentage']}%)</b>
+
+<b>✅ BULLISH SIGNALS:</b>
+{chr(10).join('• ' + s for s in analysis['signals'])}
+
+{f"<b>⚠️ WARNINGS:</b>{chr(10)}{chr(10).join('• ' + w for w in analysis['warnings'])}{chr(10)}" if analysis['warnings'] else ""}
+<b>💰 Trade Setup:</b>
+• Amount: {SOL_PER_TRADE} SOL
+• Target: +5% (${analysis['price'] * 1.05:.8f})
+• Hold: 48h if target not hit
+
+<b>📈 Chart:</b> {analysis['dex_url']}
+
+<b>Reply YES to execute or NO to skip</b>
+"""
+    
+    msg_id = send_telegram(message.strip())
+    
+    if msg_id:
+        last_notification_time = now
+        pending_approvals[msg_id] = best
+        recently_notified_coins.append(coin['address'])
+        
+        if len(recently_notified_coins) > 20:
+            recently_notified_coins.pop(0)
+        
+        logger.info("✅ Notification sent!")
 
 def check_telegram_responses():
-    """Check for user responses to buy signals"""
+    """Check for user responses"""
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
         response = requests.get(url, timeout=10)
@@ -336,153 +422,24 @@ def check_telegram_responses():
                 text = message.get('text', '').upper()
                 
                 if 'YES' in text or 'BUY' in text:
-                    # User approved a trade
-                    logger.info("User approved trade!")
-                    # TODO: Execute buy (Phase 2)
+                    logger.info("✅ User approved trade!")
+                    # TODO: Execute buy in Phase 2
                     
     except Exception as e:
         logger.error(f"Error checking responses: {e}")
 
-def analyze_and_notify():
-    """Main scanning and analysis function"""
-    global last_notification_time
-    
-    # Check if we can send notification (max 1 per 3 minutes for testing)
-    now = datetime.now()
-    if last_notification_time and (now - last_notification_time).seconds < 180:
-        logger.info("Waiting for next notification window (1 per 3 minutes)")
-        return
-    
-    logger.info("="*60)
-    logger.info("Starting scan cycle...")
-    logger.info("="*60)
-    
-    # 1. Scan for coins
-    scanner = SolanaScanner()
-    coins = scanner.get_trending_coins()
-    
-    if not coins:
-        logger.info("No trending coins found")
-        return
-    
-    # 2. Analyze each coin
-    ta_analyzer = TechnicalAnalyzer()
-    social_analyzer = SocialAnalyzer()
-    
-    candidates = []
-    
-    for coin in coins[:20]:  # Check top 20 by volume
-        logger.info(f"\n--- Analyzing {coin['symbol']} ---")
-        logger.info(f"    Price: ${coin['price']:.8f}")
-        logger.info(f"    Volume 24h: ${coin['volume_24h']:.0f}")
-        logger.info(f"    Liquidity: ${coin['liquidity']:.0f}")
-        
-        # Skip if we already notified about this coin recently
-        if coin['address'] in recently_notified_coins:
-            logger.info(f"  ⏭ Already notified about this coin recently")
-            continue
-        
-        # Technical analysis (Money Line)
-        ta_result = ta_analyzer.analyze_money_line(coin)
-        
-        if not ta_result['is_bullish']:
-            logger.info(f"  ❌ Not bullish (score: {ta_result['score']}/6)")
-            continue
-        
-        logger.info(f"  ✓ Bullish Money Line (score: {ta_result['score']}/6)")
-        
-        # Social sentiment
-        twitter_result = social_analyzer.check_twitter_sentiment(coin['symbol'], coin['name'])
-        tiktok_result = social_analyzer.check_tiktok_sentiment(coin['symbol'])
-        
-        social_score = twitter_result['score'] + tiktok_result['score']
-        
-        # For testing: accept coins even without social signals
-        # TODO: Re-enable social requirement after testing
-        # if social_score < 1:
-        #     logger.info(f"  ❌ Insufficient social signals")
-        #     continue
-        
-        if social_score > 0:
-            logger.info(f"  ✓ Social signals present (score: {social_score})")
-        else:
-            logger.info(f"  ⚠ No social signals (proceeding anyway for testing)")
-        
-        # This is a candidate!
-        candidates.append({
-            'coin': coin,
-            'ta_result': ta_result,
-            'twitter': twitter_result,
-            'tiktok': tiktok_result,
-            'total_score': ta_result['score'] + social_score
-        })
-    
-    # 3. Pick best candidate
-    if not candidates:
-        logger.info("\n❌ No coins passed all filters")
-        return
-    
-    # Sort by total score
-    best = max(candidates, key=lambda x: x['total_score'])
-    
-    logger.info(f"\n🎯 BEST OPPORTUNITY: {best['coin']['symbol']}")
-    logger.info(f"   Total score: {best['total_score']}")
-    
-    # 4. Send notification
-    coin = best['coin']
-    ta = best['ta_result']
-    
-    message = f"""
-🚀 <b>BUY SIGNAL DETECTED</b>
-
-<b>Coin:</b> {coin['symbol']} ({coin['name']})
-<b>Address:</b> <code>{coin['address']}</code>
-<b>Price:</b> ${ta['price']:.8f}
-<b>24h Volume:</b> ${coin['volume_24h']:.0f}
-
-<b>📊 Money Line Analysis (Score: {ta['score']}/6):</b>
-{chr(10).join('• ' + r for r in ta['reasons'])}
-
-<b>📱 Social Signals:</b>
-• X: {best['twitter']['summary']}
-• TikTok: {best['tiktok']['summary']}
-
-<b>💰 Trade Setup:</b>
-• Amount: {SOL_PER_TRADE} SOL
-• Target: +5% (${ta['price'] * 1.05:.8f})
-• Hold period: 48h if target not hit
-
-<b>📈 View Chart:</b> {ta['dex_url']}
-
-<b>Reply YES to execute trade or NO to skip</b>
-"""
-    
-    msg_id = send_telegram(message.strip())
-    
-    if msg_id:
-        last_notification_time = now
-        pending_approvals[msg_id] = best
-        recently_notified_coins.append(coin['address'])
-        
-        # Keep only last 20 coins in memory to avoid repeats
-        if len(recently_notified_coins) > 20:
-            recently_notified_coins.pop(0)
-        
-        logger.info("✓ Notification sent!")
-
 def monitor_positions():
-    """Monitor active positions for profit targets"""
-    # TODO: Phase 2 - after we implement trading
+    """Monitor active positions"""
+    # TODO: Phase 2
     pass
 
 def main():
     """Main bot loop"""
-    logger.info("="*60)
-    logger.info("SOLANA MEME COIN TRADING AGENT")
-    logger.info("Strategy: Money Line + Social Sentiment")
+    logger.info("="*70)
+    logger.info("SOLANA MEME COIN TRADING AGENT V2")
+    logger.info("Multi-Signal Analysis: Trend + Volume + On-Chain + Holders")
     logger.info(f"Wallet: {WALLET_ADDRESS}")
-    logger.info(f"Max notifications: 1 per 3 minutes (TESTING MODE)")
-    logger.info("="*60)
+    logger.info("="*70)
     
     # Start Flask
     flask_thread = threading.Thread(target=run_flask)
@@ -492,22 +449,18 @@ def main():
     
     time.sleep(2)
     
-    # Send startup message
-    send_telegram("🤖 Solana Meme Coin Agent is now active!\n\n📊 Scanning every 15 minutes\n💬 Max 1 signal per 3 minutes (testing mode)")
+    # Startup message
+    send_telegram("🤖 Solana Agent V2 Active!\n\n📊 Multi-signal analysis enabled:\n• Trend direction\n• Volume confirmation\n• On-chain holder data\n• Volume spike correlation\n\n⏱ Scanning every 15 min")
     
-    # Run first scan immediately
+    # First scan
     analyze_and_notify()
     
-    # Schedule scans every 15 minutes
+    # Schedule
     schedule.every(SCAN_INTERVAL_MINUTES).minutes.do(analyze_and_notify)
-    
-    # Check for responses every minute
     schedule.every(1).minutes.do(check_telegram_responses)
-    
-    # Monitor positions every 5 minutes
     schedule.every(5).minutes.do(monitor_positions)
     
-    logger.info("\n✓ Agent is running...\n")
+    logger.info("\n✓ Agent running...\n")
     
     while True:
         schedule.run_pending()
