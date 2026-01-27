@@ -262,6 +262,29 @@ def send_telegram(message: str, reply_markup: Optional[Dict] = None) -> Optional
     
     return None
 
+def send_telegram_photo(photo_url: str, caption: str) -> bool:
+    """Send photo to Telegram"""
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+        data = {
+            'chat_id': CHAT_ID,
+            'photo': photo_url,
+            'caption': caption,
+            'parse_mode': 'HTML'
+        }
+        
+        response = requests.post(url, data=data, timeout=15)
+        
+        if response.status_code == 200:
+            return True
+        else:
+            logger.error(f"Telegram photo error: {response.text}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error sending photo: {e}")
+        return False
+
 def check_telegram_responses():
     """Check for user responses to buy signals"""
     try:
@@ -288,10 +311,10 @@ def analyze_and_notify():
     """Main scanning and analysis function"""
     global last_notification_time
     
-    # Check if we can send notification (max 1 per hour)
+    # Check if we can send notification (max 1 per 3 minutes for testing)
     now = datetime.now()
-    if last_notification_time and (now - last_notification_time).seconds < 3600:
-        logger.info("Waiting for next notification window (1 per hour)")
+    if last_notification_time and (now - last_notification_time).seconds < 180:
+        logger.info("Waiting for next notification window (1 per 3 minutes)")
         return
     
     logger.info("="*60)
@@ -365,6 +388,7 @@ def analyze_and_notify():
 🚀 <b>BUY SIGNAL DETECTED</b>
 
 <b>Coin:</b> {coin['symbol']} ({coin['name']})
+<b>Address:</b> <code>{coin['address']}</code>
 <b>Price:</b> ${ta['price']:.8f}
 <b>24h Volume:</b> ${coin['volume_24h']:.0f}
 
@@ -377,10 +401,10 @@ def analyze_and_notify():
 
 <b>💰 Trade Setup:</b>
 • Amount: {SOL_PER_TRADE} SOL
-• Target: +5% ({ta['price'] * 1.05:.8f})
+• Target: +5% (${ta['price'] * 1.05:.8f})
 • Hold period: 48h if target not hit
 
-<b>🔗 Chart:</b> {ta['dex_url']}
+<b>📈 View Chart:</b> {ta['dex_url']}
 
 <b>Reply YES to execute trade or NO to skip</b>
 """
@@ -403,7 +427,7 @@ def main():
     logger.info("SOLANA MEME COIN TRADING AGENT")
     logger.info("Strategy: Money Line + Social Sentiment")
     logger.info(f"Wallet: {WALLET_ADDRESS}")
-    logger.info(f"Max notifications: 1 per hour")
+    logger.info(f"Max notifications: 1 per 3 minutes (TESTING MODE)")
     logger.info("="*60)
     
     # Start Flask
@@ -415,7 +439,7 @@ def main():
     time.sleep(2)
     
     # Send startup message
-    send_telegram("🤖 Solana Meme Coin Agent is now active!\n\n📊 Scanning every 15 minutes\n💬 Max 1 signal per hour")
+    send_telegram("🤖 Solana Meme Coin Agent is now active!\n\n📊 Scanning every 15 minutes\n💬 Max 1 signal per 3 minutes (testing mode)")
     
     # Run first scan immediately
     analyze_and_notify()
