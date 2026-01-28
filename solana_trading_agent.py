@@ -75,10 +75,10 @@ def get_and_send_top10():
         
         for i, token in enumerate(tokens[:10], 1):
             symbol = token.get('symbol', 'N/A')
-            mc = float(token.get('mc', 0))
-            price = float(token.get('price', 0))
-            change_24h = float(token.get('v24hChangePercent', 0))
-            volume_24h = float(token.get('v24hUSD', 0))
+            mc = float(token.get('mc') or 0)
+            price = float(token.get('price') or 0)
+            change_24h = float(token.get('v24hChangePercent') or 0)
+            volume_24h = float(token.get('v24hUSD') or 0)
             
             message += f"<b>{i}. {symbol}</b>\n"
             message += f"   MC: ${mc:,.0f}\n"
