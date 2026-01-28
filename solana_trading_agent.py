@@ -110,8 +110,8 @@ def scan_and_notify():
                     logger.info(f"   ⏭ Already notified")
                     continue
                 
-                # SIMPLE RULE: Any positive 24h movement
-                if price_change_24h > 0 and volume_24h > 500:
+                # SIMPLE RULE: Positive 24h movement + minimum $10k volume
+                if price_change_24h > 0 and volume_24h > 10000:
                     logger.info(f"   ✅ CANDIDATE!")
                     
                     candidates.append({
@@ -125,7 +125,7 @@ def scan_and_notify():
                         'liquidity': liquidity
                     })
                 else:
-                    logger.info(f"   ❌ Negative or no volume")
+                    logger.info(f"   ❌ Negative or low volume (<$10k)")
                     
             except Exception as e:
                 logger.error(f"Error processing token: {e}")
