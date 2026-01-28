@@ -55,6 +55,7 @@ def get_and_send_top10():
         response = requests.get(url, headers=headers, params=params, timeout=15)
         
         logger.info(f"Birdeye API status: {response.status_code}")
+        logger.info(f"Request URL: {response.url}")
         
         if response.status_code != 200:
             logger.error(f"Error: {response.text}")
@@ -62,40 +63,68 @@ def get_and_send_top10():
             return
         
         data = response.json()
+        
+        # Debug: print raw response structure
+        logger.info(f"Response keys: {data.keys()}")
+        if 'data' in data:
+            logger.info(f"Data keys: {data['data'].keys()}")
+        
         tokens = data.get('data', {}).get('tokens', [])
         
-        logger.info(f"Got {len(tokens)} tokens")
+        logger.info(f"Got {len(tokens)} tokens from Birdeye (requested 100)")
         
         if not tokens:
             send_telegram("❌ No tokens returned from Birdeye")
             return
         
-        # Filter out fake coins (must have real volume)
-        real_coins = []
+        # Filter for quality coins with your criteria
+        quality_coins = []
         for token in tokens:
+            mc = float(token.get('mc') or 0)
+            liquidity = float(token.get('liquidity') or 0)
+            fdv = float(token.get('realMc') or token.get('mc') or 0)  # Try realMc first, fallback to mc
             volume_24h = float(token.get('v24hUSD') or 0)
-            if volume_24h > 1000:  # At least $1k volume to be real
-                real_coins.append(token)
+            
+            symbol = token.get('symbol', 'UNKNOWN')
+            logger.info(f"  {symbol}: MC=${mc/1e6:.1f}M, Liq=${liquidity/1e6:.1f}M, FDV=${fdv/1e6:.1f}M, Vol=${volume_24h/1e6:.1f}M")
+            
+            # Your strict filters
+            if (mc >= 100_000_000 and 
+                liquidity >= 10_000_000 and 
+                fdv >= 10_000_000):
+                logger.info(f"    ✓ PASSED ALL FILTERS")
+                quality_coins.append(token)
+            else:
+                reasons = []
+                if mc < 100_000_000:
+                    reasons.append(f"MC too low (${mc/1e6:.1f}M)")
+                if liquidity < 10_000_000:
+                    reasons.append(f"Liq too low (${liquidity/1e6:.1f}M)")
+                if fdv < 10_000_000:
+                    reasons.append(f"FDV too low (${fdv/1e6:.1f}M)")
+                logger.info(f"    ✗ Failed: {', '.join(reasons)}")
         
-        logger.info(f"Found {len(real_coins)} coins with real volume")
+        logger.info(f"\nFound {len(quality_coins)} coins meeting criteria")
         
-        if not real_coins:
-            send_telegram("❌ No coins with real volume found")
+        if not quality_coins:
+            send_telegram("❌ No coins met the strict criteria:\n• MC > $100M\n• Liquidity > $10M\n• FDV > $10M")
             return
         
         # Build message
-        message = "📊 <b>TOP 10 REAL COINS BY MARKET CAP</b>\n"
-        message += "<i>(Min $1k volume)</i>\n\n"
+        message = "📊 <b>TOP 10 QUALITY COINS</b>\n"
+        message += "<i>MC>$100M | Liq>$10M | FDV>$10M</i>\n\n"
         
-        for i, token in enumerate(real_coins[:10], 1):
+        for i, token in enumerate(quality_coins[:10], 1):
             symbol = token.get('symbol', 'N/A')
             mc = float(token.get('mc') or 0)
+            liquidity = float(token.get('liquidity') or 0)
             price = float(token.get('price') or 0)
             change_24h = float(token.get('v24hChangePercent') or 0)
             volume_24h = float(token.get('v24hUSD') or 0)
             
             message += f"<b>{i}. {symbol}</b>\n"
             message += f"   MC: ${mc:,.0f}\n"
+            message += f"   Liq: ${liquidity:,.0f}\n"
             message += f"   Price: ${price:.6f}\n"
             message += f"   24h: {change_24h:+.1f}%\n"
             message += f"   Vol: ${volume_24h:,.0f}\n\n"
