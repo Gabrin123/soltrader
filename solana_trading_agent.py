@@ -14,7 +14,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Simple Solana Scanner Running"
+    return "Birdeye Solana Scanner Running"
 
 @app.route('/health')
 def health():
@@ -26,6 +26,7 @@ def run_flask():
 
 BOT_TOKEN = os.environ.get('BOT_TOKEN', '8457965430:AAHERt3c9hX118RcVGLoxu1OZFyePK1c7dI')
 CHAT_ID = os.environ.get('CHAT_ID', '-5232036612')
+BIRDEYE_API_KEY = os.environ.get('BIRDEYE_API_KEY', 'demo')
 
 last_notification_time = None
 notified_coins = []
@@ -49,72 +50,76 @@ def scan_and_notify():
         return
     
     logger.info("\n" + "="*70)
-    logger.info("🔍 SCANNING FOR MEME COINS...")
+    logger.info("🔍 SCANNING WITH BIRDEYE API...")
     logger.info("="*70)
     
     try:
-        # Get Solana pairs from Dexscreener
-        url = "https://api.dexscreener.com/latest/dex/pairs/solana"
-        response = requests.get(url, timeout=15)
+        # Get trending tokens from Birdeye
+        url = "https://public-api.birdeye.so/defi/tokenlist"
+        headers = {"X-API-KEY": BIRDEYE_API_KEY}
+        params = {
+            "sort_by": "v24hChangePercent",
+            "sort_type": "desc",
+            "offset": 0,
+            "limit": 50
+        }
+        
+        logger.info(f"📡 Calling Birdeye API...")
+        response = requests.get(url, headers=headers, params=params, timeout=15)
+        
+        logger.info(f"📊 Birdeye returned status: {response.status_code}")
         
         if response.status_code != 200:
-            logger.error(f"❌ Dexscreener returned {response.status_code}")
+            logger.error(f"❌ Birdeye error: {response.text}")
             return
         
         data = response.json()
-        pairs = data.get('pairs', [])
+        tokens = data.get('data', {}).get('tokens', [])
         
-        logger.info(f"📊 Got {len(pairs)} pairs from Dexscreener")
+        logger.info(f"✅ Got {len(tokens)} tokens from Birdeye")
+        
+        if not tokens:
+            logger.warning("⚠️ No tokens returned")
+            return
         
         candidates = []
         
-        for pair in pairs[:50]:  # Check first 50
+        for token in tokens:
             try:
-                # Basic info
-                symbol = pair.get('baseToken', {}).get('symbol', '')
-                address = pair.get('baseToken', {}).get('address', '')
-                quote = pair.get('quoteToken', {}).get('symbol', '')
-                
-                # Skip if not paired with SOL/USDC
-                if quote not in ['SOL', 'USDC', 'WSOL']:
-                    continue
-                
-                # Skip major tokens
-                if symbol in ['SOL', 'USDC', 'USDT', 'WSOL']:
-                    continue
+                address = token.get('address', '')
+                symbol = token.get('symbol', '')
                 
                 # Skip if already notified
                 if address in notified_coins:
                     continue
                 
                 # Get price changes
-                price_6h = float(pair.get('priceChange', {}).get('h6', 0))
-                price_24h = float(pair.get('priceChange', {}).get('h24', 0))
+                price_change_6h = float(token.get('v6hChangePercent', 0))
+                price_change_24h = float(token.get('v24hChangePercent', 0))
                 
                 # Get other data
-                price = float(pair.get('priceUsd', 0))
-                volume_24h = float(pair.get('volume', {}).get('h24', 0))
-                liquidity = float(pair.get('liquidity', {}).get('usd', 0))
-                url_dex = pair.get('url', '')
+                price = float(token.get('price', 0))
+                volume_24h = float(token.get('v24hUSD', 0))
+                liquidity = float(token.get('liquidity', 0))
                 
-                # SIMPLE RULE: Just positive 6h price change + minimum volume/liquidity
-                if price_6h > 0 and volume_24h > 1000 and liquidity > 2000:
+                # SIMPLE RULE: Positive 6h movement
+                if price_change_6h > 0 and volume_24h > 1000:
                     logger.info(f"\n✅ FOUND: {symbol}")
-                    logger.info(f"   6h: +{price_6h:.1f}% | 24h: +{price_24h:.1f}%")
+                    logger.info(f"   6h: +{price_change_6h:.1f}% | 24h: +{price_change_24h:.1f}%")
                     logger.info(f"   Volume: ${volume_24h:.0f} | Liq: ${liquidity:.0f}")
                     
                     candidates.append({
                         'symbol': symbol,
                         'address': address,
                         'price': price,
-                        'price_6h': price_6h,
-                        'price_24h': price_24h,
+                        'price_6h': price_change_6h,
+                        'price_24h': price_change_24h,
                         'volume': volume_24h,
-                        'liquidity': liquidity,
-                        'url': url_dex
+                        'liquidity': liquidity
                     })
                     
             except Exception as e:
+                logger.error(f"Error processing token: {e}")
                 continue
         
         if not candidates:
@@ -126,6 +131,9 @@ def scan_and_notify():
         best = candidates[0]
         
         logger.info(f"\n🎯 SENDING: {best['symbol']} (+{best['price_6h']:.1f}% in 6h)")
+        
+        # Dexscreener link
+        dex_url = f"https://dexscreener.com/solana/{best['address']}"
         
         message = f"""
 🚀 <b>MEME COIN SIGNAL</b>
@@ -141,7 +149,7 @@ def scan_and_notify():
 • Volume 24h: ${best['volume']:.0f}
 • Liquidity: ${best['liquidity']:.0f}
 
-<b>📈 Chart:</b> {best['url']}
+<b>📈 Chart:</b> {dex_url}
 
 <b>Address:</b> <code>{best['address']}</code>
 
@@ -152,7 +160,6 @@ def scan_and_notify():
             last_notification_time = now
             notified_coins.append(best['address'])
             
-            # Keep list manageable
             if len(notified_coins) > 30:
                 notified_coins.pop(0)
             
@@ -160,11 +167,13 @@ def scan_and_notify():
         
     except Exception as e:
         logger.error(f"❌ Error in scan: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 def main():
     logger.info("="*70)
-    logger.info("SIMPLE SOLANA MEME COIN SCANNER")
-    logger.info("Rule: Any coin with positive 6h movement")
+    logger.info("BIRDEYE SOLANA MEME COIN SCANNER")
+    logger.info(f"API Key: {BIRDEYE_API_KEY[:10]}...")
     logger.info("="*70)
     
     # Start Flask
@@ -175,7 +184,7 @@ def main():
     
     time.sleep(2)
     
-    send_telegram("🤖 Simple Scanner Active!\n\nLooking for coins with positive 6h movement\n📊 Updates every 3 minutes")
+    send_telegram("🤖 Birdeye Scanner Active!\n\nLooking for coins with positive 6h movement\n📊 Updates every 3 minutes")
     
     # First scan
     scan_and_notify()
