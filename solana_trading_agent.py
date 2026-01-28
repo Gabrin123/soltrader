@@ -84,17 +84,16 @@ def scan_and_notify():
         
         candidates = []
         
-        for token in tokens:
+        logger.info("\n📋 Analyzing tokens:")
+        
+        for i, token in enumerate(tokens[:20]):  # Check first 20
             try:
                 address = token.get('address', '')
                 symbol = token.get('symbol', '')
                 
-                # Skip if already notified
-                if address in notified_coins:
-                    continue
-                
                 # Get price changes
                 price_change_6h = float(token.get('v6hChangePercent', 0))
+                price_change_4h = float(token.get('v4hChangePercent', 0))
                 price_change_24h = float(token.get('v24hChangePercent', 0))
                 
                 # Get other data
@@ -102,35 +101,49 @@ def scan_and_notify():
                 volume_24h = float(token.get('v24hUSD', 0))
                 liquidity = float(token.get('liquidity', 0))
                 
-                # SIMPLE RULE: Positive 6h movement
-                if price_change_6h > 0 and volume_24h > 1000:
-                    logger.info(f"\n✅ FOUND: {symbol}")
-                    logger.info(f"   6h: +{price_change_6h:.1f}% | 24h: +{price_change_24h:.1f}%")
-                    logger.info(f"   Volume: ${volume_24h:.0f} | Liq: ${liquidity:.0f}")
+                # Log each token to see what we're getting
+                logger.info(f"\n{i+1}. {symbol}")
+                logger.info(f"   4h: {price_change_4h:.1f}% | 6h: {price_change_6h:.1f}% | 24h: {price_change_24h:.1f}%")
+                logger.info(f"   Vol: ${volume_24h:.0f} | Liq: ${liquidity:.0f}")
+                
+                # Skip if already notified
+                if address in notified_coins:
+                    logger.info(f"   ⏭ Already notified")
+                    continue
+                
+                # Use 4h OR 6h (whichever is available and positive)
+                price_change = price_change_4h if price_change_4h != 0 else price_change_6h
+                
+                # SIMPLE RULE: Positive 4h/6h movement
+                if price_change > 0 and volume_24h > 500:
+                    logger.info(f"   ✅ CANDIDATE!")
                     
                     candidates.append({
                         'symbol': symbol,
                         'address': address,
                         'price': price,
+                        'price_change': price_change,
                         'price_6h': price_change_6h,
                         'price_24h': price_change_24h,
                         'volume': volume_24h,
                         'liquidity': liquidity
                     })
+                else:
+                    logger.info(f"   ❌ Negative or no volume")
                     
             except Exception as e:
                 logger.error(f"Error processing token: {e}")
                 continue
         
         if not candidates:
-            logger.info("\n❌ No coins with positive 6h movement found")
+            logger.info("\n❌ No coins with positive movement found")
             return
         
-        # Sort by 6h performance
-        candidates.sort(key=lambda x: x['price_6h'], reverse=True)
+        # Sort by price change
+        candidates.sort(key=lambda x: x['price_change'], reverse=True)
         best = candidates[0]
         
-        logger.info(f"\n🎯 SENDING: {best['symbol']} (+{best['price_6h']:.1f}% in 6h)")
+        logger.info(f"\n🎯 SENDING: {best['symbol']} (+{best['price_change']:.1f}%)")
         
         # Dexscreener link
         dex_url = f"https://dexscreener.com/solana/{best['address']}"
@@ -142,7 +155,7 @@ def scan_and_notify():
 <b>Price:</b> ${best['price']:.8f}
 
 <b>Performance:</b>
-• 6h: +{best['price_6h']:.1f}%
+• Recent: +{best['price_change']:.1f}%
 • 24h: +{best['price_24h']:.1f}%
 
 <b>Stats:</b>
