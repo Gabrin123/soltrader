@@ -131,6 +131,7 @@ def analyze_coin(coin_info):
     address = coin_info['address']
     symbol = coin_info['symbol']
     source = coin_info.get('source', 'unknown')
+    is_pumpfun = (source == 'pump.fun')
     
     logger.info(f"\n🔍 Analyzing {symbol} (from {source})")
     
@@ -150,57 +151,48 @@ def analyze_coin(coin_info):
     logger.info(f"   Volume 24h: ${dex_data['volume_24h']:.0f}")
     logger.info(f"   24h Change: {dex_data['price_change_24h']:.1f}%")
     
-    # FILTER 1: Basic thresholds
-    if dex_data['liquidity'] < 50000:
-        logger.info(f"   ❌ Liquidity too low")
-        return None
-    
-    if dex_data['volume_24h'] < 20000:
-        logger.info(f"   ❌ Volume too low")
-        return None
-    
-    # Market cap check (from coin_info or calculate)
-    market_cap = coin_info.get('market_cap', 0)
-    if market_cap == 0 and dex_data['price'] > 0:
-        # Estimate market cap (rough)
-        market_cap = dex_data['liquidity'] * 2  # Rough estimate
-    
-    if market_cap < 100000:
-        logger.info(f"   ❌ Market cap too low (${market_cap:.0f})")
-        return None
-    
-    logger.info(f"   ✓ Passed basic filters")
-    
-    # FILTER 2: Get Birdeye data for holder and buy/sell info
-    logger.info(f"   📡 Checking Birdeye...")
-    birdeye_data = get_birdeye_details(address)
-    
-    if birdeye_data:
-        holder_count = birdeye_data['holder_count']
-        holder_24h_ago = birdeye_data['holder_24h_ago']
-        buy_24h = birdeye_data['buy_24h']
-        sell_24h = birdeye_data['sell_24h']
+    # RELAXED FILTERS FOR PUMP.FUN (new launches)
+    if is_pumpfun:
+        logger.info(f"   🎯 pump.fun coin - using relaxed filters")
         
-        holder_growth = holder_count - holder_24h_ago
-        
-        logger.info(f"   Holders: {holder_count} (growth: {holder_growth})")
-        logger.info(f"   Buy: ${buy_24h:.0f} | Sell: ${sell_24h:.0f}")
-        
-        # Holder growth check
-        if holder_growth <= 0:
-            logger.info(f"   ❌ No holder growth")
+        # Much lower thresholds for new launches
+        if dex_data['liquidity'] < 5000:
+            logger.info(f"   ❌ Liquidity too low (<$5k)")
             return None
         
-        # Buy/sell pressure check
-        if sell_24h > 0:
-            buy_sell_ratio = buy_24h / sell_24h
-            if buy_sell_ratio <= 1.0:
-                logger.info(f"   ❌ More sells than buys ({buy_sell_ratio:.2f})")
-                return None
-        else:
-            buy_sell_ratio = 999  # Only buys
+        if dex_data['volume_24h'] < 2000:
+            logger.info(f"   ❌ Volume too low (<$2k)")
+            return None
         
-        logger.info(f"   ✅✅ ALL FILTERS PASSED!")
+        # For pump.fun, just need positive momentum
+        if dex_data['price_change_24h'] < 0:
+            logger.info(f"   ❌ Negative price action")
+            return None
+        
+        logger.info(f"   ✅ Passed pump.fun filters!")
+        
+        market_cap = coin_info.get('market_cap', 0)
+        if market_cap == 0:
+            market_cap = dex_data['liquidity'] * 2
+        
+        # Try to get Birdeye data but don't require it
+        birdeye_data = get_birdeye_details(address)
+        
+        if birdeye_data and birdeye_data['holder_count'] > 0:
+            holder_count = birdeye_data['holder_count']
+            holder_24h_ago = birdeye_data['holder_24h_ago']
+            buy_24h = birdeye_data['buy_24h']
+            sell_24h = birdeye_data['sell_24h']
+            holder_growth = holder_count - holder_24h_ago
+            
+            buy_sell_ratio = buy_24h / sell_24h if sell_24h > 0 else 999
+            
+            logger.info(f"   📊 Holders: {holder_count} (growth: {holder_growth})")
+        else:
+            logger.info(f"   ℹ️ No holder data yet (new coin)")
+            holder_count = 0
+            holder_growth = 0
+            buy_sell_ratio = 0
         
         return {
             'symbol': symbol,
@@ -216,12 +208,57 @@ def analyze_coin(coin_info):
             'buy_sell_ratio': buy_sell_ratio,
             'dex_url': dex_data['dex_url']
         }
+    
+    # STRICT FILTERS FOR BIRDEYE (established coins)
     else:
-        logger.info(f"   ⚠ No Birdeye data available")
+        logger.info(f"   📊 Birdeye coin - using strict filters")
         
-        # If Birdeye data unavailable, use relaxed criteria
-        if dex_data['price_change_24h'] > 10:  # At least 10% gain
-            logger.info(f"   ✅ Strong price action, accepting without holder data")
+        if dex_data['liquidity'] < 50000:
+            logger.info(f"   ❌ Liquidity too low (<$50k)")
+            return None
+        
+        if dex_data['volume_24h'] < 20000:
+            logger.info(f"   ❌ Volume too low (<$20k)")
+            return None
+        
+        market_cap = coin_info.get('market_cap', 0)
+        if market_cap == 0 and dex_data['price'] > 0:
+            market_cap = dex_data['liquidity'] * 2
+        
+        if market_cap < 100000:
+            logger.info(f"   ❌ Market cap too low (${market_cap:.0f})")
+            return None
+        
+        logger.info(f"   ✓ Passed basic filters")
+        
+        # Get Birdeye data
+        logger.info(f"   📡 Checking Birdeye...")
+        birdeye_data = get_birdeye_details(address)
+        
+        if birdeye_data:
+            holder_count = birdeye_data['holder_count']
+            holder_24h_ago = birdeye_data['holder_24h_ago']
+            buy_24h = birdeye_data['buy_24h']
+            sell_24h = birdeye_data['sell_24h']
+            
+            holder_growth = holder_count - holder_24h_ago
+            
+            logger.info(f"   Holders: {holder_count} (growth: {holder_growth})")
+            logger.info(f"   Buy: ${buy_24h:.0f} | Sell: ${sell_24h:.0f}")
+            
+            if holder_growth <= 0:
+                logger.info(f"   ❌ No holder growth")
+                return None
+            
+            if sell_24h > 0:
+                buy_sell_ratio = buy_24h / sell_24h
+                if buy_sell_ratio <= 1.0:
+                    logger.info(f"   ❌ More sells than buys ({buy_sell_ratio:.2f})")
+                    return None
+            else:
+                buy_sell_ratio = 999
+            
+            logger.info(f"   ✅✅ ALL FILTERS PASSED!")
             
             return {
                 'symbol': symbol,
@@ -232,11 +269,14 @@ def analyze_coin(coin_info):
                 'volume_24h': dex_data['volume_24h'],
                 'price_change_24h': dex_data['price_change_24h'],
                 'market_cap': market_cap,
-                'holder_count': 0,
-                'holder_growth': 0,
-                'buy_sell_ratio': 0,
+                'holder_count': holder_count,
+                'holder_growth': holder_growth,
+                'buy_sell_ratio': buy_sell_ratio,
                 'dex_url': dex_data['dex_url']
             }
+        else:
+            logger.info(f"   ⚠ No Birdeye data")
+            return None
     
     return None
 
