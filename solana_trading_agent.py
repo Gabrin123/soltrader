@@ -49,7 +49,7 @@ def get_and_send_top10():
             "sort_by": "mc",  # Sort by market cap
             "sort_type": "desc",
             "offset": 0,
-            "limit": 100  # Get 100, then filter for real ones
+            "limit": 50  # Birdeye's maximum
         }
         
         response = requests.get(url, headers=headers, params=params, timeout=15)
