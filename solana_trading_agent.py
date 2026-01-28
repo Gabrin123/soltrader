@@ -39,14 +39,14 @@ def send_telegram(message):
 
 def get_and_send_top10():
     logger.info("\n" + "="*60)
-    logger.info("Fetching top 10 coins by market cap...")
+    logger.info("Fetching top coins by volume...")
     logger.info("="*60)
     
     try:
         url = "https://public-api.birdeye.so/defi/tokenlist"
         headers = {"X-API-KEY": BIRDEYE_API_KEY}
         params = {
-            "sort_by": "mc",  # Sort by market cap
+            "sort_by": "v24hUSD",  # Sort by VOLUME (real coins)
             "sort_type": "desc",
             "offset": 0,
             "limit": 50  # Birdeye's maximum
