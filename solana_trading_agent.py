@@ -70,10 +70,24 @@ def get_and_send_top10():
             send_telegram("❌ No tokens returned from Birdeye")
             return
         
-        # Build message
-        message = "📊 <b>TOP 10 COINS BY MARKET CAP</b>\n\n"
+        # Filter out fake coins (must have real volume)
+        real_coins = []
+        for token in tokens:
+            volume_24h = float(token.get('v24hUSD') or 0)
+            if volume_24h > 1000:  # At least $1k volume to be real
+                real_coins.append(token)
         
-        for i, token in enumerate(tokens[:10], 1):
+        logger.info(f"Found {len(real_coins)} coins with real volume")
+        
+        if not real_coins:
+            send_telegram("❌ No coins with real volume found")
+            return
+        
+        # Build message
+        message = "📊 <b>TOP 10 REAL COINS BY MARKET CAP</b>\n"
+        message += "<i>(Min $1k volume)</i>\n\n"
+        
+        for i, token in enumerate(real_coins[:10], 1):
             symbol = token.get('symbol', 'N/A')
             mc = float(token.get('mc') or 0)
             price = float(token.get('price') or 0)
