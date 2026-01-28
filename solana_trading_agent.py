@@ -91,10 +91,9 @@ def scan_and_notify():
                 address = token.get('address', '')
                 symbol = token.get('symbol', '')
                 
-                # Get price changes
-                price_change_6h = float(token.get('v6hChangePercent', 0))
-                price_change_4h = float(token.get('v4hChangePercent', 0))
+                # Get price changes (Birdeye only has 24h reliably)
                 price_change_24h = float(token.get('v24hChangePercent', 0))
+                price_change_1h = float(token.get('v1hChangePercent', 0))
                 
                 # Get other data
                 price = float(token.get('price', 0))
@@ -103,7 +102,7 @@ def scan_and_notify():
                 
                 # Log each token to see what we're getting
                 logger.info(f"\n{i+1}. {symbol}")
-                logger.info(f"   4h: {price_change_4h:.1f}% | 6h: {price_change_6h:.1f}% | 24h: {price_change_24h:.1f}%")
+                logger.info(f"   1h: {price_change_1h:.1f}% | 24h: {price_change_24h:.1f}%")
                 logger.info(f"   Vol: ${volume_24h:.0f} | Liq: ${liquidity:.0f}")
                 
                 # Skip if already notified
@@ -111,19 +110,16 @@ def scan_and_notify():
                     logger.info(f"   ⏭ Already notified")
                     continue
                 
-                # Use 4h OR 6h (whichever is available and positive)
-                price_change = price_change_4h if price_change_4h != 0 else price_change_6h
-                
-                # SIMPLE RULE: Positive 4h/6h movement
-                if price_change > 0 and volume_24h > 500:
+                # SIMPLE RULE: Any positive 24h movement
+                if price_change_24h > 0 and volume_24h > 500:
                     logger.info(f"   ✅ CANDIDATE!")
                     
                     candidates.append({
                         'symbol': symbol,
                         'address': address,
                         'price': price,
-                        'price_change': price_change,
-                        'price_6h': price_change_6h,
+                        'price_change': price_change_24h,
+                        'price_1h': price_change_1h,
                         'price_24h': price_change_24h,
                         'volume': volume_24h,
                         'liquidity': liquidity
