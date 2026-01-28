@@ -54,17 +54,17 @@ def scan_and_notify():
     logger.info("="*70)
     
     try:
-        # Get trending tokens from Birdeye
+        # Get trending tokens from Birdeye - SORTED BY VOLUME
         url = "https://public-api.birdeye.so/defi/tokenlist"
         headers = {"X-API-KEY": BIRDEYE_API_KEY}
         params = {
-            "sort_by": "v24hChangePercent",
+            "sort_by": "v24hUSD",  # Sort by VOLUME, not price change
             "sort_type": "desc",
             "offset": 0,
-            "limit": 50
+            "limit": 100  # Get more tokens to find quality ones
         }
         
-        logger.info(f"📡 Calling Birdeye API...")
+        logger.info(f"📡 Calling Birdeye API (sorted by volume)...")
         response = requests.get(url, headers=headers, params=params, timeout=15)
         
         if response.status_code != 200:
@@ -74,11 +74,19 @@ def scan_and_notify():
         data = response.json()
         tokens = data.get('data', {}).get('tokens', [])
         
-        logger.info(f"✅ Got {len(tokens)} tokens from Birdeye\n")
+        logger.info(f"✅ Got {len(tokens)} tokens from Birdeye")
+        logger.info(f"\n📊 TOP 15 BY VOLUME:")
+        for idx, t in enumerate(tokens[:15]):
+            sym = t.get('symbol', 'N/A')
+            vol = t.get('v24hUSD', 0)
+            mc = t.get('mc', 0)
+            change = t.get('v24hChangePercent', 0)
+            logger.info(f"  {idx+1}. {sym:10} | Vol: ${vol:>12,.0f} | MC: ${mc:>12,.0f} | 24h: {change:>6.1f}%")
+        logger.info("")
         
         candidates = []
         
-        for i, token in enumerate(tokens[:30]):
+        for i, token in enumerate(tokens[:50]):  # Check top 50 by volume
             try:
                 symbol = token.get('symbol', '')
                 address = token.get('address', '')
